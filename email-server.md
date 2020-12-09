@@ -185,10 +185,11 @@ table credentials file:/etc/mail/credentials
 listen on eth0 tls pki mail.example.com filter { check_dyndns, check_rdns, check_fcrdns, senderscore, rspamd }
 listen on eth0 port submission tls-require pki mail.example.com auth <credentials> filter rspamd
 
-action "domain_mail" maildir "/var/vmail/{%dest.domain}/%{dest.user}" virtual <virtuals>
+action "domain_mail" maildir "/var/vmail/%{dest.domain}/%{dest.user}" virtual <virtuals>
 action "outbound" relay
 
 match for local reject
+match from any for domain <domains> action "domain_mail"
 match from any auth for any action "outbound"
 ```
 
@@ -221,18 +222,13 @@ example.com
 Now lets get out credentials setup, this file is shared by both OpenSMTPD and
 Dovecot to authenticate our users.
 
-We start by generating our password to enter into `/etc/mail/credentials' config
-file"
+We start by generating our password to enter into `/etc/mail/credentials` config
+file using a website like [bcrypt-generator](https://bcrypt-generator.com)
+
+Then we add the new password into the `/etc/mail/credentials` file:
 
 ```
-echo -n "password" | /usr/libexec/opensmtpd/encrypt
-~ $6$3WwnUEfl77.h/Ogn$W5SX4eEq5b0zZDyYS2FYHTT.HN25axCQrQ9fLTuLlErIxQAqErVbJkmS0uUxkuysibGspoLzbUzcHDMg6ZCGy0
-```
-
-No lets add the new password into the `/etc/mail/credentials` file:
-
-```
-username@example.com:$6$3WwnUEfl77.h/Ogn$W5SX4eEq5b0zZDyYS2FYHTT.HN25axCQrQ9fLTuLlErIxQAqErVbJkmS0uUxkuysibGspoLzbUzcHDMg6ZCGy0:vmail:2000:2000:/var/vmail/example.com/username::userdb_mail=maildir:/var/vmail/example.com/username
+username@example.com:<generated_password>:vmail:2000:2000:/var/vmail/example.com/username::userdb_mail=maildir:/var/vmail/example.com/username
 ```
 
 You can enter multiple entries on each line, obviously changing `username` for
@@ -244,7 +240,7 @@ messages. We have used a self explanatory directory structure.
 Finally, we have to setup our virtuals, but think of these and aliases really.
 Open `/etc/mail/virtuals` and add one map per line. Should be self explanatory,
 but minimum we should collect `abuse`, `noc`, `security`, `postmaster` and
-`hostmaster`.
+`hostmaster`. Any account that isn't a forwarder should reference our system user vmail like the last line here.
 
 ```
 abuse@example.com: username@example.com
@@ -252,6 +248,7 @@ noc@example.com: username@example.com
 security@example.com: username@example.com
 postmaster@example.com: username@example.com
 hostmaster@example.com: username@example.com
+username@example.com: vmail
 ```
 
 Now lets check out config:
