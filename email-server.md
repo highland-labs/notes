@@ -153,5 +153,194 @@ More information can be found [in the docs](https://www.rspamd.com/doc/modules/d
 #### OpenSMTPD
 
 I am going to just dump in the configuration file for `/etc/smtpd.conf` there
-should be no need to change it, it's just for reference. 
+should be no need to change it apart from replacing `mail.example.com` with the
+actual production mail server domain.
 
+There are also some `filters` that apply junk tags to messages that meet certain
+criteria, you can swap the comments to reject these messages, but the more
+conservative option is default.
+
+```
+pki mail.example.com cert "/etc/letsencrypt/live/mail.example.com/fullchain.pem"
+pki mail.example.com key "/etc/letsencrypt/live/mail.example.com/privkey.pem"
+
+# filter check_dyndns phase connect match rdns regex { '.*\.dyn\..*', '.*\.dsl\..*' } disconnect "550 no residential connections"
+filter check_dyndns phase connect match rdns regex { '.*\.dyn\..*', '.*\.dsl\..*' } junk
+
+# filter check_rdns phase connect match !rdns disconnect "550 no rDNS is so 80s"
+filter check_rdns phase connect match !rdns junk
+
+# filter check_fcrdns phase connect match !fcrdns disconnect "550 no FCrDNS is so 80s"
+filter check_fcrdns phase connect match !fcrdns junk
+
+# filter senderscore proc-exec "filter-senderscore -blockBelow 10 -junkBelow 70 -slowFactor 5000"
+filter senderscore proc-exec "filter-senderscore -junkBelow 70 -slowFactor 5000"
+
+filter rspamd proc-exec "filter-rspamd"
+
+table domains file:/etc/mail/domains
+table virtuals file:/etc/mail/virtuals
+table credentials file:/etc/mail/credentials
+
+listen on eth0 tls pki mail.example.com filter { check_dyndns, check_rdns, check_fcrdns, senderscore, rspamd }
+listen on eth0 port submission tls-require pki mail.example.com auth <credentials> filter rspamd
+
+action "domain_mail" maildir "/var/vmail/{%dest.domain}/%{dest.user}" virtual <virtuals>
+action "outbound" relay
+
+match for local reject
+match from any auth for any action "outbound"
+```
+
+This config is based from a number of sources, namely:
+- [Poolp.org](https://poolp.org/posts/2019-09-14/setting-up-a-mail-server-with-opensmtpd-dovecot-and-rspamd/)
+- [Vultr](https://www.vultr.com/docs/an-openbsd-e-mail-server-using-opensmtpd-dovecot-rspamd-and-rainloop)
+- [OpenSMTPD Docs](https://man.openbsd.org/smtpd.conf)
+
+##### Configuring the virtual users and domains
+
+Because we are not using the system users and instead creating virtual users, we
+need to create a system user to manage all the mail and then create the config
+files for OpenSMTPD and Dovecot to know how to authenticate users.
+
+Start with creating the system user:
+
+```
+adduser --system --home /var/vmail --disabled-login --uid 2000 --group vmail
+```
+
+Next up lets create our domains config file. This is just a list of domains that
+we will accept mail for, all other mail will be rejected. So create
+`/etc/mail/domains` and add a list of domains, with each new domain on a new
+line:
+
+```
+example.com
+```
+
+Now lets get out credentials setup, this file is shared by both OpenSMTPD and
+Dovecot to authenticate our users.
+
+We start by generating our password to enter into `/etc/mail/credentials' config
+file"
+
+```
+echo -n "password" | /usr/libexec/opensmtpd/encrypt
+~ $6$3WwnUEfl77.h/Ogn$W5SX4eEq5b0zZDyYS2FYHTT.HN25axCQrQ9fLTuLlErIxQAqErVbJkmS0uUxkuysibGspoLzbUzcHDMg6ZCGy0
+```
+
+No lets add the new password into the `/etc/mail/credentials` file:
+
+```
+username@example.com:$6$3WwnUEfl77.h/Ogn$W5SX4eEq5b0zZDyYS2FYHTT.HN25axCQrQ9fLTuLlErIxQAqErVbJkmS0uUxkuysibGspoLzbUzcHDMg6ZCGy0:vmail:2000:2000:/var/vmail/example.com/username::userdb_mail=maildir:/var/vmail/example.com/username
+```
+
+You can enter multiple entries on each line, obviously changing `username` for
+the email you want and `example.com` for the domain. 
+
+The second part of the declaration just defines where we want to store the
+messages. We have used a self explanatory directory structure.
+
+Finally, we have to setup our virtuals, but think of these and aliases really.
+Open `/etc/mail/virtuals` and add one map per line. Should be self explanatory,
+but minimum we should collect `abuse`, `noc`, `security`, `postmaster` and
+`hostmaster`.
+
+```
+abuse@example.com: username@example.com
+noc@example.com: username@example.com
+security@example.com: username@example.com
+postmaster@example.com: username@example.com
+hostmaster@example.com: username@example.com
+```
+
+Now lets check out config:
+
+```
+smtpd -n
+```
+
+Should be all ok!
+
+#### Dovecot
+
+Dovecot can be a bit hungry with resources so we want to pull on it's reins a
+bit! Edit `/etc/security/limits.conf` and add to the list of examples: 
+
+```
+dovecot          soft    nofile          1024
+dovecot          hard    nofile          2048
+```
+
+This step is not required and these numbers can be fine tuned as required.
+
+##### Authentication
+
+Open `/etc/dovecot/conf.d/10-auth.conf` and uncomment the line `disable_plaintext_auth = yes`
+
+At the bottom of this file we have a set of include statements. Comment out the
+`auth-system` configuration and remove the comment for the `auth-passwdfile`
+config.
+
+Next `/etc/dovecot/conf.d/10-mail.conf` and change the `mail_location = maildir:/var/vmail/%d/%n`
+Further down this config uncomment and ammend `mail_uid` and `mail_gid` to be
+`2000`.
+Further down still uncomment and change `mmap_disable = yes`
+
+Now lets set the SSL options in `/etc/dovecot/conf.d/10-ssl.conf`
+First option `ssl = required`
+Then we change the paths to our certificate and key:
+```
+ssl_cert = </etc/letsencrypt/live/mail.example.com/fullchain.pem
+ssl_key = </etc/letsencrypt/live/mail.example.com/privkey.pem
+```
+
+Finally we just need to configure the passwd authentication to look at the
+correct credentials file we used earlier. Edit
+`/etc/dovecot/conf.d/auth-passwdfile.conf.ext` and change the paths to the
+crentials file created earlier:
+
+```
+passdb {
+  driver = passwd-file
+  args = scheme=CRYPT username_format=%u /etc/mail/credentials
+}
+
+userdb {
+  driver = passwd-file
+  args = username_format=%u /etc/mail/credentials
+
+  # Default fields that can be overridden by passwd-file
+  #default_fields = quota_rule=*:storage=1G
+
+  # Override fields from passwd-file
+  #override_fields = home=/home/virtual/%u
+}
+```
+
+#### Restart all services
+
+Once all the configuration is complete we just need to restart all the services:
+
+```
+service opensmtpd restart
+service dovecot restart
+service rspamd restart
+```
+
+### Adding domains or users
+
+The key configs that need to be updated are:
+
+- `/etc/rspamd/local.d/dkim_signing.conf` to add the DKIM key
+- `/etc/mail/domains` to add the accepted domain
+- `/etc/mail/credentials` to add the accounts
+- `/etc/mail/virtuals` to add any aliases/forwarders
+
+Then make sure you restart the services to pick up the new config:
+
+```
+service opensmtpd restart
+service dovecot restart
+service rspamd restart
+```
