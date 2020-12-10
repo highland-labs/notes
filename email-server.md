@@ -19,7 +19,10 @@ is the DKIM certificate.
 mkdir /etc/dkim # Only if its not present already
 
 openssl genrsa -out /etc/dkim/example.com.dkim.key 1024
-openssl rsa -in /etc/dkim/example.com.dkim.key -pubout -out /etc/dkim/example.com.dkim.pub 
+openssl rsa -in /etc/dkim/example.com.dkim.key -pubout -out /etc/dkim/example.com.dkim.pub
+
+chmod 0440 /etc/dkim/example.com.dkim.key
+chown root:_rspamd /etc/dkim/example.com.dkim.key
 
 cat /etc/dkim/example.com.dkim.pub
 
@@ -37,7 +40,7 @@ Then we can create the DNS TXT record by extracting the public key out of the ar
 dkim._domainkey.example.com. IN TXT "v=DKIM1;k=rsa;p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDThHqiM610nwN1nmV8OMc7PaPOuJWVGRDz5bWj4cRjTTmQYjJQd02xrydRNrRhjEKBm2mMDArNWjoM3jvN04ZifqJxDmKr7X8jsYi+MPEHz6wZxB8mayDK6glYTCyx//zl1luUdvm26PutA38K8cgnb7iTkfVP2OqK6sHAdXjnowIDAQAB;"
 ```
 
-The name of the record is just an arbitrary selector in this case it's
+The name of the record is just an arbitrary `selector` in this case it's
 `dkim` followed by `_domainkey`.
 
 You can create multiple DKIM certs just change the name of the file to reflect
@@ -125,9 +128,10 @@ apt install redis-server rspamd opensmtpd opensmtpd-filter-rspamd opensmtpd-filt
 
 #### RSpamd
 
-Couple of files here, the first is the `/etc/rspamd/actions.conf` this is pretty self
-explanatory and just sets the limits for when it will reject, or add junk
-headers.
+##### Actions
+
+The `/etc/rspamd/actions.conf` file is where we set the thresholds for certain actions. This should be pretty self
+explanatory and just sets the limits for when it will reject, or add junk headers.
 
 ```
 actions {
@@ -137,17 +141,46 @@ actions {
 [...]
 ```
 
-Secondly, we really want RSpamd to also do our DKIM signing. This is done by providing the configuration to match the DKIM key. Create the config file `/etc/rspamd/local.d/dkim_signing.conf` with the following content:
+##### Options
+
+I had some issues with the Nameserver resolution but it was easily fixed by adding in Cloudflare's public nameservers. So edit `/etc/rspamd/options.inc`
 
 ```
+[...]
+dns {
+    timeout = 1s;
+    sockets = 16;
+    retransmits = 5;
+    nameserver = ["1.1.1.1:53", "1.0.0.1:53"]; # Add this line to fix the issue.
+}
+[...]
+```
+
+##### DKIM Signing
+
+We really want RSpamd to also do our DKIM signing and checking. This is done by providing the configuration to match the DKIM key. Create the config file `/etc/rspamd/local.d/dkim_signing.conf` with the following content:
+
+```
+selector = "dkim";
 path = "/etc/dkim/$domain.$selector.key";
+use_domain = "envelop";
+check_pubkey = true;
 ```
 
-This matches to to our `/etc/dkim/example.com.dkim.key` key that we generated earlier
+This matches to to our `/etc/dkim/example.com.dkim.key` key that we generated earlier.
 
-You can see how you can add multiple domain blocks
+##### SPF Checks
 
-More information can be found [in the docs](https://www.rspamd.com/doc/modules/dkim_signing.html)
+This is just overriding some of the defaults nothing to change here: `/etc/rspamd/local.d/spf.conf`
+
+```
+spf_cache_size = 1k; # cache up to 1000 of the most recent SPF records
+spf_cache_expire = 1d; # default max expire for an element in this cache
+max_dns_nesting = 10; # maximum number of recursive DNS subrequests
+max_dns_requests = 30; # maximum count of DNS requests per record
+min_cache_ttl = 5m; # minimum TTL enforced for all elements in SPF records
+disable_ipv6 = false; # disable all IPv6 lookups
+```
 
 #### OpenSMTPD
 
@@ -279,9 +312,11 @@ At the bottom of this file we have a set of include statements. Comment out the
 config.
 
 Next `/etc/dovecot/conf.d/10-mail.conf` and change the `mail_location = maildir:/var/vmail/%d/%n`
-Further down this config uncomment and ammend `mail_uid` and `mail_gid` to be
+
+Further down uncomment and change `mmap_disable = yes`
+
+Further down still uncomment and ammend `first_valid_uid` and `first_valid_gid` to be
 `2000`.
-Further down still uncomment and change `mmap_disable = yes`
 
 Now lets set the SSL options in `/etc/dovecot/conf.d/10-ssl.conf`
 First option `ssl = required`
@@ -340,3 +375,29 @@ service opensmtpd restart
 service dovecot restart
 service rspamd restart
 ```
+
+## Client configuration
+
+##### Incoming Mail Server (IMAP)
+
+**Username:** john@example.com
+
+**Password:** <password>
+  
+**Hostname:** mail.example.com
+
+**Port:** 993 & Use TLS/SSL
+
+**Authentication:** Password
+
+##### Outgoing Mail Server (SMTP)
+
+**Username:** john@example.com
+
+**Password:** <password>
+  
+**Hostname:** mail.example.com
+
+**Port:** 587 & Use TLS/SSL
+
+**Authentication:** Password
