@@ -376,6 +376,28 @@ service dovecot restart
 service rspamd restart
 ```
 
+## Firewall
+
+These are the bare minimum firewall rules that we need open:
+
+```
+ufw allow 22
+ufw allow 25
+ufw allow 465
+ufw allow 587
+ufw allow 993
+```
+
+However whenever you need to generate certifgicates with `certbot` you may have to open port `80` and close it again afterwards
+
+```
+ufw allow 80
+```
+
+```
+ufw delete allow 80
+```
+
 ## Client configuration
 
 ##### Incoming Mail Server (IMAP)
