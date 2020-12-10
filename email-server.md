@@ -212,7 +212,7 @@ filter rspamd proc-exec "filter-rspamd"
 
 table domains file:/etc/mail/domains
 table virtuals file:/etc/mail/virtuals
-table credentials file:/etc/mail/credentials
+table credentials passwd:/etc/mail/credentials
 
 listen on eth0 tls pki mail.example.com filter { check_dyndns, check_rdns, check_fcrdns, senderscore, rspamd }
 listen on eth0 port submission tls-require pki mail.example.com auth <credentials> filter rspamd
