@@ -16,10 +16,12 @@ There are two main certificates that need managing for this system. This first
 is the DKIM certificate.
 
 ```
-openssl genrsa -out /etc/dkim/example.com.key 1024
-openssl rsa -in /etc/dkim/example.com.key -pubout -out /etc/dkim/example.com.pub 
+mkdir /etc/dkim # Only if its not present already
 
-cat /etc/dkim/example.com.pub
+openssl genrsa -out /etc/dkim/example.com.dkim.key 1024
+openssl rsa -in /etc/dkim/example.com.dkim.key -pubout -out /etc/dkim/example.com.dkim.pub 
+
+cat /etc/dkim/example.com.dkim.pub
 
 -----BEGIN PUBLIC KEY-----
 MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDThHqiM610nwN1nmV8OMc7PaPO
@@ -32,11 +34,11 @@ kfVP2OqK6sHAdXjnowIDAQAB
 Then we can create the DNS TXT record by extracting the public key out of the armor delimiters and formatting the content so it displays as follows:
 
 ```dns
-20201207._domainkey.example.com. IN TXT "v=DKIM1;k=rsa;p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDThHqiM610nwN1nmV8OMc7PaPOuJWVGRDz5bWj4cRjTTmQYjJQd02xrydRNrRhjEKBm2mMDArNWjoM3jvN04ZifqJxDmKr7X8jsYi+MPEHz6wZxB8mayDK6glYTCyx//zl1luUdvm26PutA38K8cgnb7iTkfVP2OqK6sHAdXjnowIDAQAB;"
+dkim._domainkey.example.com. IN TXT "v=DKIM1;k=rsa;p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDThHqiM610nwN1nmV8OMc7PaPOuJWVGRDz5bWj4cRjTTmQYjJQd02xrydRNrRhjEKBm2mMDArNWjoM3jvN04ZifqJxDmKr7X8jsYi+MPEHz6wZxB8mayDK6glYTCyx//zl1luUdvm26PutA38K8cgnb7iTkfVP2OqK6sHAdXjnowIDAQAB;"
 ```
 
-The name of the record is just an arbitrary selector in this case its the date
-`20201207` followed by `_domainkey`.
+The name of the record is just an arbitrary selector in this case it's
+`dkim` followed by `_domainkey`.
 
 You can create multiple DKIM certs just change the name of the file to reflect
 the domain in use. We'll use these to configure RSpamd later.
@@ -138,13 +140,10 @@ actions {
 Secondly, we really want RSpamd to also do our DKIM signing. This is done by providing the configuration to match the DKIM key. Create the config file `/etc/rspamd/local.d/dkim_signing.conf` with the following content:
 
 ```
-domain {
-    example.com {
-        path = "/etc/dkim/example.com.key";
-        selector = "20201207";
-    }
-}
+path = "/etc/dkim/$domain.$selector.key";
 ```
+
+This matches to to our `/etc/dkim/example.com.dkim.key` key that we generated earlier
 
 You can see how you can add multiple domain blocks
 
